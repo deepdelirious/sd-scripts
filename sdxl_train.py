@@ -6,6 +6,7 @@ import os
 from multiprocessing import Value
 from typing import List
 import toml
+import time
 
 from tqdm import tqdm
 
@@ -502,7 +503,10 @@ def train(args):
         for m in training_models:
             m.train()
 
+        last_step_end_time = time.perf_counter()
         for step, batch in enumerate(train_dataloader):
+            step_fetch_latency = time.perf_counter() - last_step_end_time
+            accelerator.log({"step_fetch_latency": step_fetch_latency}, step=global_step)
             current_step.value = global_step
             with accelerator.accumulate(*training_models):
                 if "latents" in batch and batch["latents"] is not None:
@@ -687,6 +691,7 @@ def train(args):
 
             if global_step >= args.max_train_steps:
                 break
+            last_step_end_time = time.perf_counter()
 
         if args.logging_dir is not None:
             logs = {"loss/epoch": loss_recorder.moving_average}
