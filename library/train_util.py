@@ -594,6 +594,7 @@ class BaseDataset(torch.utils.data.Dataset):
         resolution: Optional[Tuple[int, int]],
         network_multiplier: float,
         debug_dataset: bool,
+        trust_cache: bool,
     ) -> None:
         super().__init__()
 
@@ -619,6 +620,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.bucket_reso_steps = None
         self.bucket_no_upscale = None
         self.bucket_info = None  # for metadata
+        self.trust_cache = trust_cache
 
         self.tokenizer_max_length = self.tokenizers[0].model_max_length if max_token_length is None else max_token_length + 2
 
@@ -1042,6 +1044,9 @@ class BaseDataset(torch.utils.data.Dataset):
             if cache_to_disk:
                 te_out_npz = os.path.splitext(info.absolute_path)[0] + TEXT_ENCODER_OUTPUTS_CACHE_SUFFIX
                 info.text_encoder_outputs_npz = te_out_npz
+                
+                if self.trust_cache:
+                    continue
 
                 if not is_main_process:  # store to info only
                     continue
@@ -1433,7 +1438,7 @@ class DreamBoothDataset(BaseDataset):
         prior_loss_weight: float,
         debug_dataset: bool,
     ) -> None:
-        super().__init__(tokenizer, max_token_length, resolution, network_multiplier, debug_dataset)
+        super().__init__(tokenizer, max_token_length, resolution, network_multiplier, debug_dataset, trust_cache)
 
         assert resolution is not None, f"resolution is required / resolution（解像度）指定は必須です"
 
@@ -1654,7 +1659,7 @@ class FineTuningDataset(BaseDataset):
         bucket_no_upscale: bool,
         debug_dataset: bool,
     ) -> None:
-        super().__init__(tokenizer, max_token_length, resolution, network_multiplier, debug_dataset)
+        super().__init__(tokenizer, max_token_length, resolution, network_multiplier, debug_dataset, trust_cache)
 
         self.batch_size = batch_size
 
@@ -1694,9 +1699,9 @@ class FineTuningDataset(BaseDataset):
                 abs_path = None
 
                 # まず画像を優先して探す
-                if os.path.exists(image_key):
+                if os.path.exists(image_key) and not self.trust_cache:
                     abs_path = image_key
-                else:
+                elif not self.trust_cache:
                     # わりといい加減だがいい方法が思いつかん
                     paths = glob_images(subset.image_dir, image_key)
                     if len(paths) > 0:
@@ -1704,11 +1709,11 @@ class FineTuningDataset(BaseDataset):
 
                 # なければnpzを探す
                 if abs_path is None:
-                    if os.path.exists(os.path.splitext(image_key)[0] + ".npz"):
+                    if os.path.exists(os.path.splitext(image_key)[0] + ".npz") and not self.trust_cache:
                         abs_path = os.path.splitext(image_key)[0] + ".npz"
                     else:
-                        npz_path = os.path.join(subset.image_dir, image_key + ".npz")
-                        if os.path.exists(npz_path):
+                        npz_path = os.path.join(subset.image_dir, os.path.splitext(image_key)[0] + ".npz")
+                        if self.trust_cache or os.path.exists(npz_path):
                             abs_path = npz_path
 
                 assert abs_path is not None, f"no image / 画像がありません: {image_key}"
@@ -1838,6 +1843,9 @@ class FineTuningDataset(BaseDataset):
     def image_key_to_npz_file(self, subset: FineTuningSubset, image_key):
         base_name = os.path.splitext(image_key)[0]
         npz_file_norm = base_name + ".npz"
+        
+        if self.trust_cache:
+            return npz_file_norm, None
 
         if os.path.exists(npz_file_norm):
             # image_key is full path
@@ -1878,8 +1886,9 @@ class ControlNetDataset(BaseDataset):
         bucket_reso_steps: int,
         bucket_no_upscale: bool,
         debug_dataset: float,
+        trust_cache: bool,
     ) -> None:
-        super().__init__(tokenizer, max_token_length, resolution, network_multiplier, debug_dataset)
+        super().__init__(tokenizer, max_token_length, resolution, network_multiplier, debug_dataset, trust_cache)
 
         db_subsets = []
         for subset in subsets:
@@ -2273,8 +2282,8 @@ def glob_images_pathlib(dir_path, recursive):
 
 
 class MinimalDataset(BaseDataset):
-    def __init__(self, tokenizer, max_token_length, resolution, network_multiplier, debug_dataset=False):
-        super().__init__(tokenizer, max_token_length, resolution, network_multiplier, debug_dataset)
+    def __init__(self, tokenizer, max_token_length, resolution, network_multiplier, debug_dataset=False, trust_cache=False):
+        super().__init__(tokenizer, max_token_length, resolution, network_multiplier, debug_dataset, trust_cache)
 
         self.num_train_images = 0  # update in subclass
         self.num_reg_images = 0  # update in subclass
@@ -3361,6 +3370,11 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         type=str,
         default=None,
         help="tags for model metadata, separated by comma / メタデータに書き込まれるモデルタグ、カンマ区切り",
+    )
+    parser.add_argument(
+        "--trust_cache",
+        action="store_true",
+        help="don't check that files referenced by metadata exist - just assume the latents and te embeddings are cached"
     )
 
     if support_dreambooth:
