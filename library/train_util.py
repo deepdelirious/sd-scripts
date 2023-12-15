@@ -5186,7 +5186,7 @@ def sample_images_common(
     pipeline = pipe_class(
         text_encoder=text_encoder,
         vae=vae,
-        unet=unet,
+        unet=accelerator.unwrap_model(unet),
         tokenizer=tokenizer,
         scheduler=default_scheduler,
         safety_checker=None,
