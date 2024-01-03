@@ -1,4 +1,5 @@
 import torch
+import os
 from accelerate import init_empty_weights
 from accelerate.utils.modeling import set_module_tensor_to_device
 from safetensors.torch import load_file, save_file
@@ -482,6 +483,7 @@ def save_stable_diffusion_checkpoint(
     logit_scale,
     metadata,
     save_dtype=None,
+    ema_unet=None,
 ):
     state_dict = {}
 
@@ -521,6 +523,18 @@ def save_stable_diffusion_checkpoint(
         save_file(state_dict, output_file, metadata)
     else:
         torch.save(new_ckpt, output_file)
+        
+    if ema_unet:
+        ema_unet.store(unet.parameters())
+        ema_unet.copy_to(unet.parameters())
+        update_sd("model.diffusion_model.", unet.state_dict())
+        output_base, output_ext = os.path.splitext(output_file)
+        output_file = output_base + "_ema" + output_ext
+        if model_util.is_safetensors(output_file):
+            save_file(state_dict, output_file, metadata)
+        else:
+            torch.save(new_ckpt, output_file)
+        ema_unet.restore(unet.parameters())
 
     return key_count
 

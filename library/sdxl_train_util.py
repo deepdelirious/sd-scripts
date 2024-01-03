@@ -280,7 +280,9 @@ def save_sd_model_on_epoch_end_or_stepwise(
     vae,
     logit_scale,
     ckpt_info,
+    ema_unet=None,
 ):
+    
     def sd_saver(ckpt_file, epoch_no, global_step):
         sai_metadata = train_util.get_sai_model_spec(None, args, True, False, False, is_stable_diffusion_ckpt=True)
         sdxl_model_util.save_stable_diffusion_checkpoint(
@@ -295,6 +297,7 @@ def save_sd_model_on_epoch_end_or_stepwise(
             logit_scale,
             sai_metadata,
             save_dtype,
+            ema_unet,
         )
 
     def diffusers_saver(out_dir):
@@ -321,7 +324,6 @@ def save_sd_model_on_epoch_end_or_stepwise(
         sd_saver,
         diffusers_saver,
     )
-
 
 def add_sdxl_training_arguments(parser: argparse.ArgumentParser):
     parser.add_argument(

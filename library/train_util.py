@@ -5127,6 +5127,8 @@ def sample_images_common(
     unet,
     prompt_replacement=None,
     controlnet=None,
+    ema_unet=None,
+    output_label=None,
 ):
     """
     StableDiffusionLongPromptWeightingPipelineの改造版を使うようにしたので、clip skipおよびプロンプトの重みづけに対応した
@@ -5151,6 +5153,13 @@ def sample_images_common(
     if not os.path.isfile(args.sample_prompts):
         logger.error(f"No prompt file / プロンプトファイルがありません: {args.sample_prompts}")
         return
+    
+    if ema_unet:
+        unwrapped_unet = accelerator.unwrap_model(unet)
+        ema_unet.store(unwrapped_unet.parameters())
+        ema_unet.copy_to(unwrapped_unet.parameters())
+        sample_images_common(pipe_class, accelerator, args, epoch, steps, device, vae, tokenizer, text_encoder, unwrapped_unet, prompt_replacement, controlnet, output_label="ema")
+        ema_unet.restore(unwrapped_unet.parameters())
 
     distributed_state = PartialState()  # for multi gpu distributed inference. this is a singleton, so it's safe to use it here
 
@@ -5182,17 +5191,17 @@ def sample_images_common(
         sample_sampler=args.sample_sampler,
         v_parameterization=args.v_parameterization,
     )
-
     pipeline = pipe_class(
         text_encoder=text_encoder,
         vae=vae,
-        unet=accelerator.unwrap_model(unet),
+        unet=unet,
         tokenizer=tokenizer,
         scheduler=default_scheduler,
         safety_checker=None,
         feature_extractor=None,
         requires_safety_checker=False,
         clip_skip=args.clip_skip,
+        output_label=None,
     )
     pipeline.to(distributed_state.device)
     save_dir = args.output_dir + "/sample"
@@ -5236,7 +5245,7 @@ def sample_images_common(
             with distributed_state.split_between_processes(per_process_prompts) as prompt_dict_lists:
                 for prompt_dict in prompt_dict_lists[0]:
                     sample_image_inference(
-                        accelerator, args, pipeline, save_dir, prompt_dict, epoch, steps, prompt_replacement, controlnet=controlnet
+                        accelerator, args, pipeline, save_dir, prompt_dict, epoch, steps, prompt_replacement, controlnet=controlnet, output_label=output_label
                     )
 
     # clear pipeline and cache to reduce vram usage
@@ -5263,6 +5272,7 @@ def sample_image_inference(
     steps,
     prompt_replacement,
     controlnet=None,
+    output_label=None,
 ):
     assert isinstance(prompt_dict, dict)
     negative_prompt = prompt_dict.get("negative_prompt")
@@ -5332,7 +5342,14 @@ def sample_image_inference(
     ts_str = time.strftime("%Y%m%d%H%M%S", time.localtime())
     num_suffix = f"e{epoch:06d}" if epoch is not None else f"{steps:06d}"
     seed_suffix = "" if seed is None else f"_{seed}"
+    output_name = args.output_name
+    if output_label:
+        if output_name:
+            output_name = output_name + "_" + output_label
+        else:
+            output_name = output_label
     i: int = prompt_dict["enum"]
+      
     img_filename = f"{'' if args.output_name is None else args.output_name + '_'}{num_suffix}_{i:02d}_{ts_str}{seed_suffix}.png"
     image.save(os.path.join(save_dir, img_filename))
 
