@@ -43,6 +43,8 @@ from library.custom_train_functions import (
 )
 from library.sdxl_original_unet import SdxlUNet2DConditionModel
 
+from diffusers.training_utils import EMAModel
+
 
 UNET_NUM_BLOCKS_FOR_BLOCK_LR = 23
 
@@ -473,6 +475,18 @@ def train(args):
     sdxl_train_util.sample_images(
         accelerator, args, 0, global_step, accelerator.device, vae, [tokenizer1, tokenizer2], [text_encoder1, text_encoder2], unet
     )
+    
+    if args.ema_decay:
+        accelerator.print("Using EMA. Creating EMAModel.")
+        ema_unet = EMAModel(
+            unet.parameters(),
+            model_cls=SdxlUNet2DConditionModel,
+            decay=args.ema_decay,
+            min_decay=args.ema_decay,
+        )
+        ema_unet.to(accelerator.device, dtype=weight_dtype)
+    else:
+        ema_unet = None
 
     loss_recorder = train_util.LossRecorder()
     for epoch in range(num_train_epochs):
@@ -613,6 +627,10 @@ def train(args):
             if accelerator.sync_gradients:
                 progress_bar.update(1)
                 global_step += 1
+                
+                if ema_unet:
+                    ema_unet.step(unet.parameters())
+                    ema_unet.optimization_step = global_step
 
                 sdxl_train_util.sample_images(
                     accelerator,
@@ -624,6 +642,7 @@ def train(args):
                     [tokenizer1, tokenizer2],
                     [text_encoder1, text_encoder2],
                     unet,
+                    ema_unet=ema_unet,
                 )
 
                 # 指定ステップごとにモデルを保存
@@ -648,6 +667,7 @@ def train(args):
                             vae,
                             logit_scale,
                             ckpt_info,
+                            ema_unet=ema_unet if ema_unet else None
                         )
 
             current_loss = loss.detach().item()  # 平均なのでbatch sizeは関係ないはず
@@ -663,6 +683,8 @@ def train(args):
             loss_recorder.add(epoch=epoch, step=step, loss=current_loss)
             avr_loss: float = loss_recorder.moving_average
             logs = {"avr_loss": avr_loss}  # , "lr": lr_scheduler.get_last_lr()[0]}
+            if ema_unet:
+                logs["ema_decay_value"] = ema_unet.get_decay(ema_unet.optimization_step)
             progress_bar.set_postfix(**logs)
 
             if global_step >= args.max_train_steps:
@@ -707,6 +729,7 @@ def train(args):
             [tokenizer1, tokenizer2],
             [text_encoder1, text_encoder2],
             unet,
+            ema_unet=ema_unet,
         )
 
     is_main_process = accelerator.is_main_process
@@ -783,6 +806,12 @@ def setup_parser() -> argparse.ArgumentParser:
         default=None,
         help=f"learning rates for each block of U-Net, comma-separated, {UNET_NUM_BLOCKS_FOR_BLOCK_LR} values / "
         + f"U-Netの各ブロックの学習率、カンマ区切り、{UNET_NUM_BLOCKS_FOR_BLOCK_LR}個の値",
+    )
+    parser.add_argument(
+        "--ema_decay",
+        type=float,
+        default=None,
+        help=f"ema decay rate - leave unset to disable ema"
     )
 
     return parser
