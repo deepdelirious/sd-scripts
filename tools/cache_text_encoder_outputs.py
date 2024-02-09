@@ -150,7 +150,7 @@ def cache_to_disk(args: argparse.Namespace) -> None:
 
             if args.skip_existing:
                 if os.path.exists(image_info.text_encoder_outputs_npz):
-                    logger.warning(f"Skipping {image_info.text_encoder_outputs_npz} because it already exists.")
+                    #logger.warning(f"Skipping {image_info.text_encoder_outputs_npz} because it already exists.")
                     continue
                 
             image_info.input_ids1 = input_ids1
