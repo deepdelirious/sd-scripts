@@ -5342,7 +5342,7 @@ def sample_image_inference(
     ts_str = time.strftime("%Y%m%d%H%M%S", time.localtime())
     num_suffix = f"e{epoch:06d}" if epoch is not None else f"{steps:06d}"
     seed_suffix = "" if seed is None else f"_{seed}"
-    output_name = args.output_name
+    output_name = args.output_name or "sample"
     if output_label:
         if output_name:
             output_name = output_name + "_" + output_label
@@ -5361,7 +5361,7 @@ def sample_image_inference(
         except ImportError:  # 事前に一度確認するのでここはエラー出ないはず
             raise ImportError("No wandb / wandb がインストールされていないようです")
 
-        wandb_tracker.log({f"sample_{i}": wandb.Image(image, caption=f"{output_name}: {prompt}")})
+        wandb_tracker.log({f"{output_name}_{i}": wandb.Image(image, caption=f"{output_name}: {prompt}")})
     except:  # wandb 無効時
         pass
 

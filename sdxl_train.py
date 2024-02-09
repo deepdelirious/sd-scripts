@@ -741,6 +741,7 @@ def train(args):
                     vae,
                     logit_scale,
                     ckpt_info,
+                    ema_unet=ema_unet if ema_unet else None
                 )
 
         sdxl_train_util.sample_images(
