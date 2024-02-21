@@ -113,6 +113,10 @@ def main(args):
     # 読み込みの高速化のためにDataLoaderを使うオプション
     if args.max_data_loader_n_workers is not None:
         dataset = train_util.ImageLoadingDataset(image_paths)
+        
+        if args.trust_cache:
+            dataset.images = [image for image in dataset.images if image not in metadata]
+        
         data = torch.utils.data.DataLoader(
             dataset,
             batch_size=1,
@@ -130,6 +134,13 @@ def main(args):
             continue
 
         img_tensor, image_path = data_entry[0]
+        image_key = image_path if args.full_path else os.path.splitext(os.path.basename(image_path))[0]
+        
+        if image_key not in metadata:
+            metadata[image_key] = {}
+        elif args.trust_cache:
+            continue
+        
         if img_tensor is not None:
             image = transforms.functional.to_pil_image(img_tensor)
         else:
@@ -140,10 +151,6 @@ def main(args):
             except Exception as e:
                 logger.error(f"Could not load image path / 画像を読み込めません: {image_path}, error: {e}")
                 continue
-
-        image_key = image_path if args.full_path else os.path.splitext(os.path.basename(image_path))[0]
-        if image_key not in metadata:
-            metadata[image_key] = {}
 
         # 本当はこのあとの部分もDataSetに持っていけば高速化できるがいろいろ大変
 
@@ -253,6 +260,11 @@ def setup_parser() -> argparse.ArgumentParser:
         "--recursive",
         action="store_true",
         help="recursively look for training tags in all child folders of train_data_dir / train_data_dirのすべての子フォルダにある学習タグを再帰的に探す",
+    )
+    parser.add_argument(
+        "--trust_cache",
+        action="store_true",
+        help="don't bother double checking things already in the metadata - they're fine"
     )
 
     return parser
