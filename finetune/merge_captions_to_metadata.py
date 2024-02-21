@@ -27,6 +27,9 @@ def main(args):
   else:
     logger.info("new metadata will be created / 新しいメタデータファイルが作成されます")
     metadata = {}
+    
+  if args.skip_existing:
+    image_paths = [image for image in image_paths if str(image) not in metadata or "caption" not in metadata[str(image)]]
 
   logger.info("merge caption texts to metadata json.")
   for image_path in tqdm(image_paths):
@@ -64,7 +67,11 @@ def setup_parser() -> argparse.ArgumentParser:
   parser.add_argument("--recursive", action="store_true",
                       help="recursively look for training tags in all child folders of train_data_dir / train_data_dirのすべての子フォルダにある学習タグを再帰的に探す")
   parser.add_argument("--debug", action="store_true", help="debug mode")
-
+  parser.add_argument(
+      "--skip_existing",
+      action="store_true",
+      help="skip images if npz already exists (both normal and flipped exists if flip_aug is enabled) / npzが既に存在する画像をスキップする（flip_aug有効時は通常、反転の両方が存在する画像をスキップ）",
+  )
   return parser
 
 
