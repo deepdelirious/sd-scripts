@@ -65,6 +65,7 @@ import numpy as np
 from PIL import Image
 import cv2
 import safetensors.torch
+import traceback
 from library.lpw_stable_diffusion import StableDiffusionLongPromptWeightingPipeline
 import library.model_util as model_util
 import library.huggingface_util as huggingface_util
@@ -1127,131 +1128,149 @@ class BaseDataset(torch.utils.data.Dataset):
         text_encoder_pool2_list = []
 
         for image_key in bucket[image_index : image_index + bucket_batch_size]:
-            image_info = self.image_data[image_key]
-            subset = self.image_to_subset[image_key]
-            loss_weights.append(
-                self.prior_loss_weight if image_info.is_reg else 1.0
-            )  # in case of fine tuning, is_reg is always False
+            try:
+                image_info = self.image_data[image_key]
+                subset = self.image_to_subset[image_key]
+                loss_weights.append(
+                    self.prior_loss_weight if image_info.is_reg else 1.0
+                )  # in case of fine tuning, is_reg is always False
 
-            flipped = subset.flip_aug and random.random() < 0.5  # not flipped or flipped with 50% chance
+                flipped = subset.flip_aug and random.random() < 0.5  # not flipped or flipped with 50% chance
 
-            # image/latentsを処理する
-            if image_info.latents is not None:  # cache_latents=Trueの場合
-                original_size = image_info.latents_original_size
-                crop_ltrb = image_info.latents_crop_ltrb  # calc values later if flipped
-                if not flipped:
-                    latents = image_info.latents
-                else:
-                    latents = image_info.latents_flipped
-
-                image = None
-            elif image_info.latents_npz is not None:  # FineTuningDatasetまたはcache_latents_to_disk=Trueの場合
-                latents, original_size, crop_ltrb, flipped_latents = load_latents_from_disk(image_info.latents_npz)
-                if flipped:
-                    latents = flipped_latents
-                    del flipped_latents
-                latents = torch.FloatTensor(latents)
-
-                image = None
-            else:
-                # 画像を読み込み、必要ならcropする
-                img, face_cx, face_cy, face_w, face_h = self.load_image_with_face_info(subset, image_info.absolute_path)
-                im_h, im_w = img.shape[0:2]
-
-                if self.enable_bucket:
-                    img, original_size, crop_ltrb = trim_and_resize_if_required(
-                        subset.random_crop, img, image_info.bucket_reso, image_info.resized_size
-                    )
-                else:
-                    if face_cx > 0:  # 顔位置情報あり
-                        img = self.crop_target(subset, img, face_cx, face_cy, face_w, face_h)
-                    elif im_h > self.height or im_w > self.width:
-                        assert (
-                            subset.random_crop
-                        ), f"image too large, but cropping and bucketing are disabled / 画像サイズが大きいのでface_crop_aug_rangeかrandom_crop、またはbucketを有効にしてください: {image_info.absolute_path}"
-                        if im_h > self.height:
-                            p = random.randint(0, im_h - self.height)
-                            img = img[p : p + self.height]
-                        if im_w > self.width:
-                            p = random.randint(0, im_w - self.width)
-                            img = img[:, p : p + self.width]
-
-                    im_h, im_w = img.shape[0:2]
-                    assert (
-                        im_h == self.height and im_w == self.width
-                    ), f"image size is small / 画像サイズが小さいようです: {image_info.absolute_path}"
-
-                    original_size = [im_w, im_h]
-                    crop_ltrb = (0, 0, 0, 0)
-
-                # augmentation
-                aug = self.aug_helper.get_augmentor(subset.color_aug)
-                if aug is not None:
-                    img = aug(image=img)["image"]
-
-                if flipped:
-                    img = img[:, ::-1, :].copy()  # copy to avoid negative stride problem
-
-                latents = None
-                image = self.image_transforms(img)  # -1.0~1.0のtorch.Tensorになる
-
-            images.append(image)
-            latents_list.append(latents)
-
-            target_size = (image.shape[2], image.shape[1]) if image is not None else (latents.shape[2] * 8, latents.shape[1] * 8)
-
-            if not flipped:
-                crop_left_top = (crop_ltrb[0], crop_ltrb[1])
-            else:
-                # crop_ltrb[2] is right, so target_size[0] - crop_ltrb[2] is left in flipped image
-                crop_left_top = (target_size[0] - crop_ltrb[2], crop_ltrb[1])
-
-            original_sizes_hw.append((int(original_size[1]), int(original_size[0])))
-            crop_top_lefts.append((int(crop_left_top[1]), int(crop_left_top[0])))
-            target_sizes_hw.append((int(target_size[1]), int(target_size[0])))
-            flippeds.append(flipped)
-
-            # captionとtext encoder outputを処理する
-            caption = image_info.caption  # default
-            if image_info.text_encoder_outputs1 is not None:
-                text_encoder_outputs1_list.append(image_info.text_encoder_outputs1)
-                text_encoder_outputs2_list.append(image_info.text_encoder_outputs2)
-                text_encoder_pool2_list.append(image_info.text_encoder_pool2)
-                captions.append(caption)
-            elif image_info.text_encoder_outputs_npz is not None:
-                text_encoder_outputs1, text_encoder_outputs2, text_encoder_pool2 = load_text_encoder_outputs_from_disk(
-                    image_info.text_encoder_outputs_npz
-                )
-                text_encoder_outputs1_list.append(text_encoder_outputs1)
-                text_encoder_outputs2_list.append(text_encoder_outputs2)
-                text_encoder_pool2_list.append(text_encoder_pool2)
-                captions.append(caption)
-            else:
-                caption = self.process_caption(subset, image_info.caption)
-                if self.XTI_layers:
-                    caption_layer = []
-                    for layer in self.XTI_layers:
-                        token_strings_from = " ".join(self.token_strings)
-                        token_strings_to = " ".join([f"{x}_{layer}" for x in self.token_strings])
-                        caption_ = caption.replace(token_strings_from, token_strings_to)
-                        caption_layer.append(caption_)
-                    captions.append(caption_layer)
-                else:
-                    captions.append(caption)
-
-                if not self.token_padding_disabled:  # this option might be omitted in future
-                    if self.XTI_layers:
-                        token_caption = self.get_input_ids(caption_layer, self.tokenizers[0])
+                # image/latentsを処理する
+                if image_info.latents is not None:  # cache_latents=Trueの場合
+                    original_size = image_info.latents_original_size
+                    crop_ltrb = image_info.latents_crop_ltrb  # calc values later if flipped
+                    if not flipped:
+                        latents = image_info.latents
                     else:
-                        token_caption = self.get_input_ids(caption, self.tokenizers[0])
-                    input_ids_list.append(token_caption)
+                        latents = image_info.latents_flipped
 
-                    if len(self.tokenizers) > 1:
+                    image = None
+                elif image_info.latents_npz is not None:  # FineTuningDatasetまたはcache_latents_to_disk=Trueの場合
+                    latents, original_size, crop_ltrb, flipped_latents = load_latents_from_disk(image_info.latents_npz)
+                    if flipped:
+                        latents = flipped_latents
+                        del flipped_latents
+                    latents = torch.FloatTensor(latents)
+
+                    image = None
+                else:
+                    # 画像を読み込み、必要ならcropする
+                    img, face_cx, face_cy, face_w, face_h = self.load_image_with_face_info(subset, image_info.absolute_path)
+                    im_h, im_w = img.shape[0:2]
+
+                    if self.enable_bucket:
+                        img, original_size, crop_ltrb = trim_and_resize_if_required(
+                            subset.random_crop, img, image_info.bucket_reso, image_info.resized_size
+                        )
+                    else:
+                        if face_cx > 0:  # 顔位置情報あり
+                            img = self.crop_target(subset, img, face_cx, face_cy, face_w, face_h)
+                        elif im_h > self.height or im_w > self.width:
+                            assert (
+                                subset.random_crop
+                            ), f"image too large, but cropping and bucketing are disabled / 画像サイズが大きいのでface_crop_aug_rangeかrandom_crop、またはbucketを有効にしてください: {image_info.absolute_path}"
+                            if im_h > self.height:
+                                p = random.randint(0, im_h - self.height)
+                                img = img[p : p + self.height]
+                            if im_w > self.width:
+                                p = random.randint(0, im_w - self.width)
+                                img = img[:, p : p + self.width]
+
+                        im_h, im_w = img.shape[0:2]
+                        assert (
+                            im_h == self.height and im_w == self.width
+                        ), f"image size is small / 画像サイズが小さいようです: {image_info.absolute_path}"
+
+                        original_size = [im_w, im_h]
+                        crop_ltrb = (0, 0, 0, 0)
+
+                    # augmentation
+                    aug = self.aug_helper.get_augmentor(subset.color_aug)
+                    if aug is not None:
+                        img = aug(image=img)["image"]
+
+                    if flipped:
+                        img = img[:, ::-1, :].copy()  # copy to avoid negative stride problem
+
+                    latents = None
+                    image = self.image_transforms(img)  # -1.0~1.0のtorch.Tensorになる
+
+                images.append(image)
+                latents_list.append(latents)
+
+                target_size = (image.shape[2], image.shape[1]) if image is not None else (latents.shape[2] * 8, latents.shape[1] * 8)
+
+                if not flipped:
+                    crop_left_top = (crop_ltrb[0], crop_ltrb[1])
+                else:
+                    # crop_ltrb[2] is right, so target_size[0] - crop_ltrb[2] is left in flipped image
+                    crop_left_top = (target_size[0] - crop_ltrb[2], crop_ltrb[1])
+
+                original_sizes_hw.append((int(original_size[1]), int(original_size[0])))
+                crop_top_lefts.append((int(crop_left_top[1]), int(crop_left_top[0])))
+                target_sizes_hw.append((int(target_size[1]), int(target_size[0])))
+                flippeds.append(flipped)
+
+                # captionとtext encoder outputを処理する
+                caption = image_info.caption  # default
+                if image_info.text_encoder_outputs1 is not None:
+                    text_encoder_outputs1_list.append(image_info.text_encoder_outputs1)
+                    text_encoder_outputs2_list.append(image_info.text_encoder_outputs2)
+                    text_encoder_pool2_list.append(image_info.text_encoder_pool2)
+                    captions.append(caption)
+                elif image_info.text_encoder_outputs_npz is not None:
+                    text_encoder_outputs1, text_encoder_outputs2, text_encoder_pool2 = load_text_encoder_outputs_from_disk(
+                        image_info.text_encoder_outputs_npz
+                    )
+                    text_encoder_outputs1_list.append(text_encoder_outputs1)
+                    text_encoder_outputs2_list.append(text_encoder_outputs2)
+                    text_encoder_pool2_list.append(text_encoder_pool2)
+                    captions.append(caption)
+                else:
+                    caption = self.process_caption(subset, image_info.caption)
+                    if self.XTI_layers:
+                        caption_layer = []
+                        for layer in self.XTI_layers:
+                            token_strings_from = " ".join(self.token_strings)
+                            token_strings_to = " ".join([f"{x}_{layer}" for x in self.token_strings])
+                            caption_ = caption.replace(token_strings_from, token_strings_to)
+                            caption_layer.append(caption_)
+                        captions.append(caption_layer)
+                    else:
+                        captions.append(caption)
+
+                    if not self.token_padding_disabled:  # this option might be omitted in future
                         if self.XTI_layers:
-                            token_caption2 = self.get_input_ids(caption_layer, self.tokenizers[1])
+                            token_caption = self.get_input_ids(caption_layer, self.tokenizers[0])
                         else:
-                            token_caption2 = self.get_input_ids(caption, self.tokenizers[1])
-                        input_ids2_list.append(token_caption2)
+                            token_caption = self.get_input_ids(caption, self.tokenizers[0])
+                        input_ids_list.append(token_caption)
+
+                        if len(self.tokenizers) > 1:
+                            if self.XTI_layers:
+                                token_caption2 = self.get_input_ids(caption_layer, self.tokenizers[1])
+                            else:
+                                token_caption2 = self.get_input_ids(caption, self.tokenizers[1])
+                            input_ids2_list.append(token_caption2)
+            except:
+                print(f"Error processing {image_key}")
+                print(traceback.format_exc())
+                lists = (
+                    text_encoder_outputs1_list,
+                    text_encoder_outputs2_list,
+                    captions,
+                    original_sizes_hw,
+                    crop_top_lefts,
+                    target_sizes_hw,
+                    flippeds,
+                    latents_list
+                )
+                size = min(tuple(len(l) for l in lists))
+                for l in lists:
+                    while len(l) > size:
+                        l.pop()
 
         example = {}
         example["loss_weights"] = torch.FloatTensor(loss_weights)
