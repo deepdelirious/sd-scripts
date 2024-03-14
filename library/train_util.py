@@ -1591,6 +1591,7 @@ class FineTuningDataset(BaseDataset):
         bucket_reso_steps: int,
         bucket_no_upscale: bool,
         debug_dataset: bool,
+        trust_cache: bool,
     ) -> None:
         super().__init__(tokenizer, max_token_length, resolution, network_multiplier, debug_dataset, trust_cache)
 
@@ -4912,7 +4913,6 @@ def sample_images_common(
         feature_extractor=None,
         requires_safety_checker=False,
         clip_skip=args.clip_skip,
-        output_label=None,
     )
     pipeline.to(distributed_state.device)
     save_dir = args.output_dir + "/sample"
