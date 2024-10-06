@@ -49,6 +49,7 @@ from library.config_util import (
 )
 from library.custom_train_functions import apply_masked_loss, add_custom_train_arguments
 
+from safetensors.torch import load_file
 
 def train(args):
     train_util.verify_training_args(args)
@@ -209,9 +210,27 @@ def train(args):
     flux_tokenize_strategy = strategy_flux.FluxTokenizeStrategy(t5xxl_max_token_length)
     strategy_base.TokenizeStrategy.set_strategy(flux_tokenize_strategy)
 
+    def inject_embedding(model, tokenizer, placeholder, embed_file, embed_key):
+        embed_state_dict = load_file(embed_file)
+        if not embed_key in embed_state_dict:
+            raise Exception(f"{embed_key} not found in {embed_file}")
+        tokenizer.add_tokens(placeholder)
+        index = tokenizer.convert_tokens_to_ids(placeholder)
+        if (model.get_input_embeddings().num_embeddings <= len(tokenizer)):
+            model.resize_token_embeddings(len(tokenizer))
+            print(f"Expanded model embeddings to : {model.get_input_embeddings().num_embeddings}")
+        model.get_input_embeddings().weight.data[index] = embed_state_dict[embed_key]
+        print(f"Added custom embedding for {placeholder} to {embed_key} as token {index}")
+
     # load clip_l, t5xxl for caching text encoder outputs
-    clip_l = flux_utils.load_clip_l(args.clip_l, weight_dtype, "cpu", args.disable_mmap_load_safetensors)
+    clip_l = flux_utils.load_clip_l(args.clip_l, weight_dtype, "cpu", args.disable_mmap_load_safetensors)    
     t5xxl = flux_utils.load_t5xxl(args.t5xxl, weight_dtype, "cpu", args.disable_mmap_load_safetensors)
+    
+    if args.additional_embedding:
+        for placeholder, embed_file in args.additional_embedding:
+                inject_embedding(clip_l, flux_tokenize_strategy.clip_l, placeholder, embed_file, "clip_l")
+                inject_embedding(t5xxl, flux_tokenize_strategy.t5xxl, placeholder, embed_file, "t5xxl")
+    
     clip_l.eval()
     t5xxl.eval()
     clip_l.requires_grad_(False)
@@ -984,6 +1003,11 @@ def setup_parser() -> argparse.ArgumentParser:
         "--cpu_offload_checkpointing",
         action="store_true",
         help="[EXPERIMENTAL] enable offloading of tensors to CPU during checkpointing / チェックポイント時にテンソルをCPUにオフロードする",
+    )
+    parser.add_argument(
+        "--additional_embedding",
+        action="append",
+        nargs=2
     )
     return parser
 
