@@ -42,6 +42,8 @@ from library.config_util import (
 )
 from library.custom_train_functions import apply_masked_loss, add_custom_train_arguments
 
+from safetensors.torch import load_file
+
 # from library.custom_train_functions import (
 #     apply_snr_weight,
 #     prepare_scheduler_for_custom_training,
@@ -227,6 +229,18 @@ def train(args):
     # load tokenizer and prepare tokenize strategy
     sd3_tokenize_strategy = strategy_sd3.Sd3TokenizeStrategy(args.t5xxl_max_token_length)
     strategy_base.TokenizeStrategy.set_strategy(sd3_tokenize_strategy)
+    
+    def inject_embedding(model, tokenizer, placeholder, embed_file, embed_key):
+        embed_state_dict = load_file(embed_file)
+        if not embed_key in embed_state_dict:
+            raise Exception(f"{embed_key} not found in {embed_file}")
+        tokenizer.add_tokens(placeholder)
+        index = tokenizer.convert_tokens_to_ids(placeholder)
+        if (model.get_input_embeddings().num_embeddings <= len(tokenizer)):
+            model.resize_token_embeddings(len(tokenizer))
+            logger.info(f"Expanded model embeddings to : {model.get_input_embeddings().num_embeddings}")
+        model.get_input_embeddings().weight.data[index] = embed_state_dict[embed_key]
+        logger.info(f"Added custom embedding for {placeholder} to {embed_key} as token {index}")
 
     # load clip_l, clip_g, t5xxl for caching text encoder outputs
     # clip_l = sd3_train_utils.load_target_model("clip_l", args, sd3_state_dict, accelerator, attn_mode, clip_dtype, device_to_load)
@@ -234,6 +248,13 @@ def train(args):
     clip_l = sd3_utils.load_clip_l(args.clip_l, weight_dtype, "cpu", args.disable_mmap_load_safetensors, state_dict=sd3_state_dict)
     clip_g = sd3_utils.load_clip_g(args.clip_g, weight_dtype, "cpu", args.disable_mmap_load_safetensors, state_dict=sd3_state_dict)
     t5xxl = sd3_utils.load_t5xxl(args.t5xxl, weight_dtype, "cpu", args.disable_mmap_load_safetensors, state_dict=sd3_state_dict)
+    
+    if args.additional_embedding:
+        for placeholder, embed_file in args.additional_embedding:
+                inject_embedding(clip_l, sd3_tokenize_strategy.clip_l, placeholder, embed_file, "clip_l")
+                inject_embedding(clip_g, sd3_tokenize_strategy.clip_g, placeholder, embed_file, "clip_g")
+                inject_embedding(t5xxl, sd3_tokenize_strategy.t5xxl, placeholder, embed_file, "t5xxl")
+    
     assert clip_l is not None and clip_g is not None and t5xxl is not None, "clip_l, clip_g, t5xxl must be specified"
 
     # prepare text encoding strategy
@@ -1175,6 +1196,11 @@ def setup_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="freeze last n blocks of MM-DIT / MM-DITの最後のnブロックを凍結する",
+    )
+    parser.add_argument(
+        "--additional_embedding",
+        action="append",
+        nargs=2
     )
     return parser
 

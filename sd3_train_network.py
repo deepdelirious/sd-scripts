@@ -17,6 +17,7 @@ from library.utils import setup_logging
 
 setup_logging()
 import logging
+from safetensors.torch import load_file
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class Sd3NetworkTrainer(train_network.NetworkTrainer):
     def __init__(self):
         super().__init__()
         self.sample_prompts_te_outputs = None
+        self.tokenizer_cache = {}
 
     def assert_extra_args(self, args, train_dataset_group):
         super().assert_extra_args(args, train_dataset_group)
@@ -88,12 +90,31 @@ class Sd3NetworkTrainer(train_network.NetworkTrainer):
             loading_dtype = None  # as is
         else:
             loading_dtype = weight_dtype
+            
+        def inject_embedding(model, tokenizer, placeholder, embed_file, embed_key):
+            embed_state_dict = load_file(embed_file)
+            if not embed_key in embed_state_dict:
+                raise Exception(f"{embed_key} not found in {embed_file}")
+            tokenizer.add_tokens(placeholder)
+            index = tokenizer.convert_tokens_to_ids(placeholder)
+            if (model.get_input_embeddings().num_embeddings <= len(tokenizer)):
+                model.resize_token_embeddings(len(tokenizer))
+                logger.info(f"Expanded model embeddings to : {model.get_input_embeddings().num_embeddings}")
+            model.get_input_embeddings().weight.data[index] = embed_state_dict[embed_key]
+            logger.info(f"Added custom embedding for {placeholder} to {embed_key} as token {index}")
 
         # loading t5xxl to cpu takes a long time, so we should load to gpu in future
         t5xxl = sd3_utils.load_t5xxl(
             args.t5xxl, loading_dtype, "cpu", disable_mmap=args.disable_mmap_load_safetensors, state_dict=state_dict
         )
         t5xxl.eval()
+        
+        if args.additional_embedding:
+            for placeholder, embed_file in args.additional_embedding:
+                    inject_embedding(clip_l, self.get_tokenize_strategy(args).clip_l, placeholder, embed_file, "clip_l")
+                    inject_embedding(clip_g, self.get_tokenize_strategy(args).clip_g, placeholder, embed_file, "clip_g")
+                    inject_embedding(t5xxl, self.get_tokenize_strategy(args).t5xxl, placeholder, embed_file, "t5xxl")
+                
         if args.fp8_base and not args.fp8_base_unet:
             # check dtype of model
             if t5xxl.dtype == torch.float8_e4m3fnuz or t5xxl.dtype == torch.float8_e5m2 or t5xxl.dtype == torch.float8_e5m2fnuz:
@@ -108,8 +129,13 @@ class Sd3NetworkTrainer(train_network.NetworkTrainer):
         return mmdit.model_type, [clip_l, clip_g, t5xxl], vae, mmdit
 
     def get_tokenize_strategy(self, args):
+        cache_key = "sd3_" + str(args.t5xxl_max_token_length)
+        if cache_key in self.tokenizer_cache:
+            return self.tokenizer_cache[cache_key]
         logger.info(f"t5xxl_max_token_length: {args.t5xxl_max_token_length}")
-        return strategy_sd3.Sd3TokenizeStrategy(args.t5xxl_max_token_length, args.tokenizer_cache_dir)
+        tokenizer = strategy_sd3.Sd3TokenizeStrategy(args.t5xxl_max_token_length, args.tokenizer_cache_dir)
+        self.tokenizer_cache[cache_key] = tokenizer
+        return tokenizer
 
     def get_tokenizers(self, tokenize_strategy: strategy_sd3.Sd3TokenizeStrategy):
         return [tokenize_strategy.clip_l, tokenize_strategy.clip_g, tokenize_strategy.t5xxl]
@@ -427,6 +453,11 @@ class Sd3NetworkTrainer(train_network.NetworkTrainer):
 def setup_parser() -> argparse.ArgumentParser:
     parser = train_network.setup_parser()
     sd3_train_utils.add_sd3_training_arguments(parser)
+    parser.add_argument(
+        "--additional_embedding",
+        action="append",
+        nargs=2
+    )
     return parser
 
 
