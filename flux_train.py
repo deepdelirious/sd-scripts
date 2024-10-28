@@ -218,9 +218,9 @@ def train(args):
         index = tokenizer.convert_tokens_to_ids(placeholder)
         if (model.get_input_embeddings().num_embeddings <= len(tokenizer)):
             model.resize_token_embeddings(len(tokenizer))
-            print(f"Expanded model embeddings to : {model.get_input_embeddings().num_embeddings}")
+            logger.info(f"Expanded model embeddings to : {model.get_input_embeddings().num_embeddings}")
         model.get_input_embeddings().weight.data[index] = embed_state_dict[embed_key]
-        print(f"Added custom embedding for {placeholder} to {embed_key} as token {index}")
+        logger.info(f"Added custom embedding for {placeholder} to {embed_key} as token {index}")
 
     # load clip_l, t5xxl for caching text encoder outputs
     clip_l = flux_utils.load_clip_l(args.clip_l, weight_dtype, "cpu", args.disable_mmap_load_safetensors)    
