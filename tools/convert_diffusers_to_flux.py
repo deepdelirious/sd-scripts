@@ -56,7 +56,7 @@ def convert(args):
     save_dtype = str_to_dtype(args.save_precision) if args.save_precision is not None else None
 
     # make reverse map from diffusers map
-    diffusers_to_bfl_map = flux_utils.make_diffusers_to_bfl_map()
+    diffusers_to_bfl_map = flux_utils.make_diffusers_to_bfl_map(num_double_blocks=flux_utils.NUM_DOUBLE_BLOCKS, num_single_blocks=flux_utils.NUM_SINGLE_BLOCKS)
 
     # iterate over three safetensors files to reduce memory usage
     flux_sd = {}

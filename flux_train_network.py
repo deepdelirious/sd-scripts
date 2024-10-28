@@ -157,7 +157,7 @@ class FluxNetworkTrainer(train_network.NetworkTrainer):
         return flux_utils.MODEL_VERSION_FLUX_V1, [clip_l, t5xxl], ae, model
 
     def get_tokenize_strategy(self, args):
-        name = self.get_flux_model_name(args)
+        name = "flux"
         cache_key = name + "_" + str(args.t5xxl_max_token_length)
         if cache_key in self.tokenizer_cache:
             return self.tokenizer_cache[cache_key]
