@@ -17,7 +17,7 @@ from library.utils import setup_logging
 
 setup_logging()
 import logging
-from safetensors.torch import load_file
+import embedding_utils
 
 logger = logging.getLogger(__name__)
 
@@ -115,18 +115,6 @@ class Sd3NetworkTrainer(train_network.NetworkTrainer):
             loading_dtype = None  # as is
         else:
             loading_dtype = weight_dtype
-            
-        def inject_embedding(model, tokenizer, placeholder, embed_file, embed_key):
-            embed_state_dict = load_file(embed_file)
-            if not embed_key in embed_state_dict:
-                raise Exception(f"{embed_key} not found in {embed_file}")
-            tokenizer.add_tokens(placeholder)
-            index = tokenizer.convert_tokens_to_ids(placeholder)
-            if (model.get_input_embeddings().num_embeddings <= len(tokenizer)):
-                model.resize_token_embeddings(len(tokenizer))
-                logger.info(f"Expanded model embeddings to : {model.get_input_embeddings().num_embeddings}")
-            model.get_input_embeddings().weight.data[index] = embed_state_dict[embed_key]
-            logger.info(f"Added custom embedding for {placeholder} to {embed_key} as token {index}")
 
         # loading t5xxl to cpu takes a long time, so we should load to gpu in future
         t5xxl = sd3_utils.load_t5xxl(
@@ -134,11 +122,12 @@ class Sd3NetworkTrainer(train_network.NetworkTrainer):
         )
         t5xxl.eval()
         
+        strategy = self.get_tokenize_strategy(args)
         if args.additional_embedding:
             for placeholder, embed_file in args.additional_embedding:
-                    inject_embedding(clip_l, self.get_tokenize_strategy(args).clip_l, placeholder, embed_file, "clip_l")
-                    inject_embedding(clip_g, self.get_tokenize_strategy(args).clip_g, placeholder, embed_file, "clip_g")
-                    inject_embedding(t5xxl, self.get_tokenize_strategy(args).t5xxl, placeholder, embed_file, "t5xxl")
+                    embedding_utils.inject_embedding(clip_l, strategy, strategy.clip_l, placeholder, embed_file, "clip_l")
+                    embedding_utils.inject_embedding(clip_g, strategy, strategy.clip_g, placeholder, embed_file, "clip_g")
+                    embedding_utils.inject_embedding(t5xxl, strategy, strategy.t5xxl, placeholder, embed_file, "t5xxl")
                 
         if args.fp8_base and not args.fp8_base_unet:
             # check dtype of model

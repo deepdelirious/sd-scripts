@@ -22,20 +22,20 @@ T5_XXL_TOKENIZER_ID = "google/t5-v1_1-xxl"
 
 class FluxTokenizeStrategy(TokenizeStrategy):
     def __init__(self, t5xxl_max_length: int = 512, tokenizer_cache_dir: Optional[str] = None) -> None:
+        super().__init__()
         self.t5xxl_max_length = t5xxl_max_length
         self.clip_l = self._load_tokenizer(CLIPTokenizer, CLIP_L_TOKENIZER_ID, tokenizer_cache_dir=tokenizer_cache_dir)
         self.t5xxl = self._load_tokenizer(T5TokenizerFast, T5_XXL_TOKENIZER_ID, tokenizer_cache_dir=tokenizer_cache_dir)
 
     def tokenize(self, text: Union[str, List[str]]) -> List[torch.Tensor]:
         text = [text] if isinstance(text, str) else text
-
+        text = self._process_replacements(text)        
         l_tokens = self.clip_l(text, max_length=77, padding="max_length", truncation=True, return_tensors="pt")
         t5_tokens = self.t5xxl(text, max_length=self.t5xxl_max_length, padding="max_length", truncation=True, return_tensors="pt")
 
         t5_attn_mask = t5_tokens["attention_mask"]
         l_tokens = l_tokens["input_ids"]
         t5_tokens = t5_tokens["input_ids"]
-
         return [l_tokens, t5_tokens, t5_attn_mask]
 
 

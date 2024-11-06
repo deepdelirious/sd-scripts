@@ -50,6 +50,17 @@ class TokenizeStrategy:
     @classmethod
     def get_strategy(cls) -> Optional["TokenizeStrategy"]:
         return cls._strategy
+    
+    def __init__(self):
+        self.replacements = []
+        
+    def add_replacement(self, original, replacement):
+        self.replacements.append((original, replacement))
+        
+    def _process_replacements(self, text):
+        for original, replacement in self.replacements:
+            text = [t.replace(original, replacement) for t in text]
+        return text
 
     def _load_tokenizer(
         self, model_class: Any, model_id: str, subfolder: Optional[str] = None, tokenizer_cache_dir: Optional[str] = None
