@@ -16,6 +16,7 @@ from safetensors.torch import save_file
 
 from library import flux_models, flux_utils, strategy_base, train_util
 from library.device_utils import init_ipex, clean_memory_on_device
+from ema_pytorch import EMA
 
 init_ipex()
 
@@ -529,10 +530,15 @@ def save_flux_model_on_epoch_end_or_stepwise(
     num_train_epochs: int,
     global_step: int,
     flux: flux_models.Flux,
+    ema: EMA = None
 ):
     def sd_saver(ckpt_file, epoch_no, global_step):
         sai_metadata = train_util.get_sai_model_spec(None, args, False, False, False, is_stable_diffusion_ckpt=True, flux="dev")
         save_models(ckpt_file, flux, sai_metadata, save_dtype, args.mem_eff_save)
+        if ema:
+            filename, extension = os.path.splitext(ckpt_file)
+            ema_file = filename + "_ema" + extension
+            save_models(ema_file, ema.ema_model, sai_metadata, save_dtype, args.mem_eff_save)
 
     train_util.save_sd_model_on_epoch_end_or_stepwise_common(
         args,

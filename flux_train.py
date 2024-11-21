@@ -19,6 +19,7 @@ from multiprocessing import Value
 import time
 from typing import List, Optional, Tuple, Union
 import toml
+from ema_pytorch import EMA
 
 from tqdm import tqdm
 
@@ -279,6 +280,8 @@ def train(args):
     _, flux = flux_utils.load_flow_model(
         args.pretrained_model_name_or_path, weight_dtype, "cpu", args.disable_mmap_load_safetensors
     )
+    
+    ema = EMA(flux, beta = args.ema_beta, update_after_step=args.ema_update_after_step, update_every=args.ema_update_every, update_model_with_ema_every=args.ema_switch_every, allow_different_devices=True) if args.ema else None
 
     if args.gradient_checkpointing:
         flux.enable_gradient_checkpointing(cpu_offload=args.cpu_offload_checkpointing)
@@ -586,6 +589,7 @@ def train(args):
 
     loss_recorder = train_util.LossRecorder()
     epoch = 0  # avoid error when max_train_steps is 0
+   
     for epoch in range(num_train_epochs):
         accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
         current_epoch.value = epoch + 1
@@ -714,7 +718,10 @@ def train(args):
                 flux_train_utils.sample_images(
                     accelerator, args, None, global_step, flux, ae, [clip_l, t5xxl], sample_prompts_te_outputs
                 )
-
+                
+                if ema:
+                    ema.update()
+                
                 # 指定ステップごとにモデルを保存
                 if args.save_every_n_steps is not None and global_step % args.save_every_n_steps == 0:
                     accelerator.wait_for_everyone()
@@ -728,6 +735,7 @@ def train(args):
                             num_train_epochs,
                             global_step,
                             accelerator.unwrap_model(flux),
+                            ema
                         )
                 optimizer_train_fn()
 
@@ -764,6 +772,7 @@ def train(args):
                     num_train_epochs,
                     global_step,
                     accelerator.unwrap_model(flux),
+                    ema
                 )
 
         flux_train_utils.sample_images(
@@ -847,6 +856,30 @@ def setup_parser() -> argparse.ArgumentParser:
         "--additional_embedding",
         action="append",
         nargs=2
+    )
+    parser.add_argument(
+        "--ema",
+        action="store_true"
+    )
+    parser.add_argument(
+        "--ema_beta",
+        type=float,
+        default=0.9999
+    )
+    parser.add_argument(
+        "--ema_update_after_step",
+        type=int,
+        default=1
+    )
+    parser.add_argument(
+        "--ema_update_every",
+        type=int,
+        default=1
+    )
+    parser.add_argument(
+        "--ema_switch_every",
+        type=int,
+        default=None
     )
     return parser
 
