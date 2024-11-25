@@ -41,7 +41,8 @@ def sample_images(
     text_encoders,
     sample_prompts_te_outputs,
     prompt_replacement=None,
-    controlnet=None
+    controlnet=None,
+    ema=None,
 ):
     if steps == 0:
         if not args.sample_at_first:
@@ -104,6 +105,28 @@ def sample_images(
                     prompt_replacement,
                     controlnet
                 )
+            if ema:
+                device = flux.device
+                flux.to("cpu")
+                ema.to(device)
+                for prompt_dict in prompts:
+                    sample_image_inference(
+                        accelerator,
+                        args,
+                        ema,
+                        text_encoders,
+                        ae,
+                        save_dir,
+                        prompt_dict,
+                        epoch,
+                        steps,
+                        sample_prompts_te_outputs,
+                        prompt_replacement,
+                        controlnet,
+                        file_suffix = "_ema"
+                    )
+                ema.to("cpu")
+                flux.to(device)
     else:
         # Creating list with N elements, where each element is a list of prompt_dicts, and N is the number of processes available (number of devices available)
         # prompt_dicts are assigned to lists based on order of processes, to attempt to time the image creation time to match enum order. Probably only works when steps and sampler are identical.
@@ -128,6 +151,28 @@ def sample_images(
                         prompt_replacement,
                         controlnet
                     )
+                if ema:
+                    device = flux.device
+                    flux.to("cpu")
+                    ema.to(device)
+                    for prompt_dict in prompt_dict_lists[0]:
+                        sample_image_inference(
+                            accelerator,
+                            args,
+                            ema,
+                            text_encoders,
+                            ae,
+                            save_dir,
+                            prompt_dict,
+                            epoch,
+                            steps,
+                            sample_prompts_te_outputs,
+                            prompt_replacement,
+                            controlnet,
+                            file_suffix = "_ema"
+                        )
+                    ema.to("cpu")
+                    flux.to(device)
 
     torch.set_rng_state(rng_state)
     if cuda_rng_state is not None:
@@ -148,7 +193,8 @@ def sample_image_inference(
     steps,
     sample_prompts_te_outputs,
     prompt_replacement,
-    controlnet
+    controlnet,
+    file_suffix = "",
 ):
     assert isinstance(prompt_dict, dict)
     # negative_prompt = prompt_dict.get("negative_prompt")
@@ -260,7 +306,7 @@ def sample_image_inference(
     num_suffix = f"e{epoch:06d}" if epoch is not None else f"{steps:06d}"
     seed_suffix = "" if seed is None else f"_{seed}"
     i: int = prompt_dict["enum"]
-    img_filename = f"{'' if args.output_name is None else args.output_name + '_'}{num_suffix}_{i:02d}_{ts_str}{seed_suffix}.png"
+    img_filename = f"{'' if args.output_name is None else args.output_name + '_'}{num_suffix}_{i:02d}_{ts_str}{seed_suffix}{file_suffix}.png"
     image.save(os.path.join(save_dir, img_filename))
 
     # send images to wandb if enabled
@@ -270,7 +316,7 @@ def sample_image_inference(
         import wandb
 
         # not to commit images to avoid inconsistency between training and logging steps
-        wandb_tracker.log({f"sample_{i}": wandb.Image(image, caption=prompt)}, commit=False)  # positive prompt as a caption
+        wandb_tracker.log({f"sample_{i}{file_suffix}": wandb.Image(image, caption=prompt)}, commit=False)  # positive prompt as a caption
 
 
 def time_shift(mu: float, sigma: float, t: torch.Tensor):
@@ -321,7 +367,8 @@ def denoise(
 
     for t_curr, t_prev in zip(tqdm(timesteps[:-1]), timesteps[1:]):
         t_vec = torch.full((img.shape[0],), t_curr, dtype=img.dtype, device=img.device)
-        model.prepare_block_swap_before_forward()
+        if hasattr(model, "prepare_block_swap_before_forward"):
+            model.prepare_block_swap_before_forward()
         if controlnet is not None:
             block_samples, block_single_samples = controlnet(
                 img=img,
@@ -351,8 +398,10 @@ def denoise(
         )
 
         img = img + (t_prev - t_curr) * pred
+        
+    if hasattr(model, "prepare_block_swap_before_forward"):
+        model.prepare_block_swap_before_forward()
 
-    model.prepare_block_swap_before_forward()
     return img
 
 
@@ -510,11 +559,15 @@ def save_models(
 
 
 def save_flux_model_on_train_end(
-    args: argparse.Namespace, save_dtype: torch.dtype, epoch: int, global_step: int, flux: flux_models.Flux
+    args: argparse.Namespace, save_dtype: torch.dtype, epoch: int, global_step: int, flux: flux_models.Flux, ema: EMA = None
 ):
     def sd_saver(ckpt_file, epoch_no, global_step):
         sai_metadata = train_util.get_sai_model_spec(None, args, False, False, False, is_stable_diffusion_ckpt=True, flux="dev")
         save_models(ckpt_file, flux, sai_metadata, save_dtype, args.mem_eff_save)
+        if ema:
+            filename, extension = os.path.splitext(ckpt_file)
+            ema_file = filename + "_ema" + extension
+            save_models(ema_file, ema.ema_model, sai_metadata, save_dtype, args.mem_eff_save)
 
     train_util.save_sd_model_on_train_end_common(args, True, True, epoch, global_step, sd_saver, None)
 

@@ -716,7 +716,7 @@ def train(args):
 
                 optimizer_eval_fn()
                 flux_train_utils.sample_images(
-                    accelerator, args, None, global_step, flux, ae, [clip_l, t5xxl], sample_prompts_te_outputs
+                    accelerator, args, None, global_step, flux, ae, [clip_l, t5xxl], sample_prompts_te_outputs, ema=ema
                 )
                 
                 if ema:
@@ -793,7 +793,7 @@ def train(args):
     del accelerator  # この後メモリを使うのでこれは消す
 
     if is_main_process:
-        flux_train_utils.save_flux_model_on_train_end(args, save_dtype, epoch, global_step, flux)
+        flux_train_utils.save_flux_model_on_train_end(args, save_dtype, epoch, global_step, flux, ema)
         logger.info("model saved.")
 
 
