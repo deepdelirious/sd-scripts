@@ -5939,7 +5939,7 @@ def append_lr_to_logs_with_names(logs, lr_scheduler, optimizer_type, names):
     lrs = lr_scheduler.get_last_lr()
 
     for lr_index in range(len(lrs)):
-        name = names[lr_index]
+        name = names[lr_index] if lr_index < len(names) else str(lr_index)
         logs["lr/" + name] = float(lrs[lr_index])
 
         if optimizer_type.lower().startswith("DAdapt".lower()) or optimizer_type.lower() == "Prodigy".lower():
