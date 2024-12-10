@@ -423,7 +423,7 @@ def train(args):
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset_group,
         batch_size=1,
-        shuffle=True,
+        shuffle=not args.no_shuffle,
         collate_fn=collator,
         num_workers=n_workers,
         persistent_workers=args.persistent_data_loader_workers,
@@ -904,6 +904,11 @@ def setup_parser() -> argparse.ArgumentParser:
         "--ema_switch_every",
         type=int,
         default=None
+    )
+    parser.add_argument(
+        "--no_shuffle",
+        action="store_true",
+        help="do not use shuffle in the dataloader - rely on the underlying dataset",
     )
     return parser
 
