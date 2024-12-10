@@ -957,6 +957,7 @@ def train(args):
         sd3_train_utils.sample_images(
             accelerator, args, epoch + 1, global_step, mmdit, vae, [clip_l, clip_g, t5xxl], sample_prompts_te_outputs
         )
+        optimizer_train_fn()
 
     is_main_process = accelerator.is_main_process
     # if is_main_process:
