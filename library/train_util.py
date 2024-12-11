@@ -16,6 +16,7 @@ from typing import (
     Any,
     Callable,
     Dict,
+    Iterable,
     List,
     NamedTuple,
     Optional,
@@ -5029,6 +5030,7 @@ def get_dummy_scheduler(optimizer: Optimizer) -> Any:
     class DummyScheduler:
         def __init__(self, optimizer: Optimizer):
             self.optimizer = optimizer
+            self.optimizers = [optimizer]
 
         def step(self):
             pass
@@ -5942,7 +5944,7 @@ def append_lr_to_logs_with_names(logs, lr_scheduler, optimizer_type, names):
         name = names[lr_index] if lr_index < len(names) else str(lr_index)
         logs["lr/" + name] = float(lrs[lr_index])
 
-        if optimizer_type.lower().startswith("DAdapt".lower()) or optimizer_type.lower() == "Prodigy".lower():
+        if optimizer_type.lower().startswith("DAdapt".lower()) or optimizer_type.lower() == "Prodigy".lower() or optimizer_type.lower() == "prodigyplus.ProdigyPlusScheduleFree".lower():
             logs["lr/d*lr/" + name] = (
                 lr_scheduler.optimizers[-1].param_groups[lr_index]["d"] * lr_scheduler.optimizers[-1].param_groups[lr_index]["lr"]
             )
@@ -6394,3 +6396,20 @@ class LossRecorder:
     @property
     def moving_average(self) -> float:
         return self.loss_total / len(self.loss_list)
+    
+class LatencyRecordingIterable:
+    
+    def __init__(self, src: Iterable):
+        self.src = src
+        self.last_iteration_latency = None
+        
+    def __iter__(self):
+        src_iter = self.src.__iter__()
+        while True:
+            start = time.monotonic()
+            try:
+                result = next(src_iter)
+            except StopIteration:
+                return
+            self.last_iteration_latency = time.monotonic() - start
+            yield result

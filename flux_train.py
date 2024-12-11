@@ -608,6 +608,7 @@ def train(args):
 
     loss_recorder = train_util.LossRecorder()
     epoch = 0  # avoid error when max_train_steps is 0
+    train_dataloader = train_util.LatencyRecordingIterable(train_dataloader)
    
     for epoch in range(num_train_epochs):
         accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
@@ -617,6 +618,7 @@ def train(args):
             m.train()
 
         for step, batch in enumerate(train_dataloader):
+            step_start = time.monotonic()
             current_step.value = global_step
 
             if args.blockwise_fused_optimizers:
@@ -762,19 +764,26 @@ def train(args):
             if len(accelerator.trackers) > 0:
                 logs = {"loss": current_loss}
                 train_util.append_lr_to_logs(logs, lr_scheduler, args.optimizer_type, including_unet=True)
-
-                accelerator.log(logs, step=global_step)
+            else:
+                logs = {}
 
             loss_recorder.add(epoch=epoch, step=step, loss=current_loss)
             avr_loss: float = loss_recorder.moving_average
-            logs = {"avr_loss": avr_loss}  # , "lr": lr_scheduler.get_last_lr()[0]}
+            logs = logs | {"avr_loss": avr_loss}  # , "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
+            logs = logs | {"step_time": time.monotonic() - step_start}
+            inter_step_latency = train_dataloader.last_iteration_latency
+            if inter_step_latency:
+                logs = logs | {"inter_step_time": inter_step_latency}
+                
+            if len(accelerator.trackers) > 0:
+                accelerator.log(logs, step=global_step)
 
             if global_step >= args.max_train_steps:
                 break
 
         if len(accelerator.trackers) > 0:
-            logs = {"loss/epoch": loss_recorder.moving_average}
+            logs = logs | {"loss/epoch": loss_recorder.moving_average}
             accelerator.log(logs, step=epoch + 1)
 
         accelerator.wait_for_everyone()
