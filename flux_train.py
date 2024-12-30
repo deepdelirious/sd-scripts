@@ -482,9 +482,14 @@ def train(args):
     if args.deepspeed:
         ds_model = deepspeed_utils.prepare_deepspeed_model(args, mmdit=flux)
         # most of ZeRO stage uses optimizer partitioning, so we have to prepare optimizer and ds_model at the same time. # pull/1139#issuecomment-1986790007
-        ds_model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-            ds_model, optimizer, train_dataloader, lr_scheduler
-        )
+        if args.no_accelerate_dataloader:
+            ds_model, optimizer, lr_scheduler = accelerator.prepare(
+                ds_model, optimizer, lr_scheduler
+            )
+        else:
+            ds_model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+                ds_model, optimizer, train_dataloader, lr_scheduler
+            )
         training_models = [ds_model]
 
     else:
@@ -493,7 +498,10 @@ def train(args):
         flux = accelerator.prepare(flux, device_placement=[not is_swapping_blocks])
         if is_swapping_blocks:
             accelerator.unwrap_model(flux).move_to_device_except_swap_blocks(accelerator.device)  # reduce peak memory usage
-        optimizer, train_dataloader, lr_scheduler = accelerator.prepare(optimizer, train_dataloader, lr_scheduler)
+        if args.no_accelerate_dataloader:
+            optimizer, lr_scheduler = accelerator.prepare(optimizer, lr_scheduler)
+        else:
+            optimizer, train_dataloader, lr_scheduler = accelerator.prepare(optimizer, train_dataloader, lr_scheduler)
 
     # 実験的機能：勾配も含めたfp16学習を行う　PyTorchにパッチを当ててfp16でのgrad scaleを有効にする
     if args.full_fp16:
@@ -926,6 +934,11 @@ def setup_parser() -> argparse.ArgumentParser:
         "--no_train",
         action="store_true",
         help="skip the actual training - useful if you just want to cache latents/te output"
+    )
+    parser.add_argument(
+        "--no_accelerate_dataloader",
+        action="store_true",
+        help="disable DataLoader acceleration"
     )
     return parser
 
