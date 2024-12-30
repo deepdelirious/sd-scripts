@@ -276,6 +276,9 @@ def train(args):
         t5xxl = None
         clean_memory_on_device(accelerator.device)
 
+    if args.no_train:
+        logger.info("Exiting due to no_train")
+        return
     # load FLUX
     _, flux = flux_utils.load_flow_model(
         args.pretrained_model_name_or_path, weight_dtype, "cpu", args.disable_mmap_load_safetensors
@@ -919,10 +922,32 @@ def setup_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="do not use shuffle in the dataloader - rely on the underlying dataset",
     )
+    parser.add_argument(
+        "--no_train",
+        action="store_true",
+        help="skip the actual training - useful if you just want to cache latents/te output"
+    )
     return parser
 
+import code, traceback, signal
+
+def debug(sig, frame):
+    """Interrupt running process, and provide a python prompt for
+    interactive debugging."""
+    d={'_frame':frame}         # Allow access to frame object.
+    d.update(frame.f_globals)  # Unless shadowed by global
+    d.update(frame.f_locals)
+
+    i = code.InteractiveConsole(d)
+    message  = "Signal received : entering python shell.\nTraceback:\n"
+    message += ''.join(traceback.format_stack(frame))
+    i.interact(message)
+
+def listen():
+    signal.signal(signal.SIGUSR1, debug)  # Register handler
 
 if __name__ == "__main__":
+    listen()
     parser = setup_parser()
 
     args = parser.parse_args()
