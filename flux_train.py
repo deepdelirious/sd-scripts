@@ -30,7 +30,7 @@ from library.device_utils import init_ipex, clean_memory_on_device
 
 init_ipex()
 
-from accelerate.utils import set_seed
+from accelerate.utils import set_seed, send_to_device
 from library import deepspeed_utils, flux_train_utils, flux_utils, strategy_base, strategy_flux
 from library.sd3_train_utils import FlowMatchEulerDiscreteScheduler
 
@@ -647,6 +647,10 @@ def train(args):
                     if torch.any(torch.isnan(latents)):
                         accelerator.print("NaN found in latents, replacing with zeros")
                         latents = torch.nan_to_num(latents, 0, out=latents)
+
+                if args.no_accelerate_dataloader:
+                    #The accelerator wrapper of the dataloader was handling device placement, but we disabled it.
+                    batch = send_to_device(batch, accelerator.device)
 
                 text_encoder_outputs_list = batch.get("text_encoder_outputs_list", None)
                 if text_encoder_outputs_list is not None:
