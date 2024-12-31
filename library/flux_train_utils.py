@@ -106,14 +106,15 @@ def sample_images(
                     controlnet
                 )
             if ema:
-                device = flux.device
-                flux.to("cpu")
-                ema.to(device)
+                model_params = [param.detach().cpu().clone() for _, param in ema.get_params_iter(flux)]
+                for (_, model_param), (_, ema_param) in zip(ema.get_params_iter(flux), ema.get_params_iter(ema.ema_model)):
+                    ema_param = ema_param.to(model_param.device)
+                    model_param.copy_(ema_param)
                 for prompt_dict in prompts:
                     sample_image_inference(
                         accelerator,
                         args,
-                        ema,
+                        flux,
                         text_encoders,
                         ae,
                         save_dir,
@@ -125,10 +126,10 @@ def sample_images(
                         controlnet,
                         file_suffix = "_ema"
                     )
-                ema.to("cpu")
-                flux.to(device)
-                with torch.cuda.device(device):
-                    torch.cuda.empty_cache()
+                for (_, model_param), original_model_param in zip(ema.get_params_iter(flux), model_params):
+                    original_model_param = original_model_param.to(model_param.device)
+                    model_param.data.copy_(original_model_param.data)
+                model_params = None
     else:
         # Creating list with N elements, where each element is a list of prompt_dicts, and N is the number of processes available (number of devices available)
         # prompt_dicts are assigned to lists based on order of processes, to attempt to time the image creation time to match enum order. Probably only works when steps and sampler are identical.
@@ -154,14 +155,15 @@ def sample_images(
                         controlnet
                     )
                 if ema:
-                    device = flux.device
-                    flux.to("cpu")
-                    ema.to(device)
+                    model_params = [param.detach().cpu().clone() for _, param in ema.get_params_iter(flux)]
+                    for (_, model_param), (_, ema_param) in zip(ema.get_params_iter(flux), ema.get_params_iter(ema.ema_model)):
+                        ema_param = ema_param.to(model_param.device)
+                        model_param.copy_(ema_param)
                     for prompt_dict in prompt_dict_lists[0]:
                         sample_image_inference(
                             accelerator,
                             args,
-                            ema,
+                            flux,
                             text_encoders,
                             ae,
                             save_dir,
@@ -173,10 +175,10 @@ def sample_images(
                             controlnet,
                             file_suffix = "_ema"
                         )
-                    ema.to("cpu")
-                    flux.to(device)
-                    with torch.cuda.device(device):
-                        torch.cuda.empty_cache()
+                    for (_, model_param), original_model_param in zip(ema.get_params_iter(flux), model_params):
+                        original_model_param = original_model_param.to(model_param.device)
+                        model_param.data.copy_(original_model_param.data)
+                    model_params = None
 
     torch.set_rng_state(rng_state)
     if cuda_rng_state is not None:
