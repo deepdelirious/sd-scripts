@@ -127,6 +127,8 @@ def sample_images(
                     )
                 ema.to("cpu")
                 flux.to(device)
+                with torch.cuda.device(device):
+                    torch.cuda.empty_cache()
     else:
         # Creating list with N elements, where each element is a list of prompt_dicts, and N is the number of processes available (number of devices available)
         # prompt_dicts are assigned to lists based on order of processes, to attempt to time the image creation time to match enum order. Probably only works when steps and sampler are identical.
@@ -173,6 +175,8 @@ def sample_images(
                         )
                     ema.to("cpu")
                     flux.to(device)
+                    with torch.cuda.device(device):
+                        torch.cuda.empty_cache()
 
     torch.set_rng_state(rng_state)
     if cuda_rng_state is not None:

@@ -284,7 +284,8 @@ def train(args):
         args.pretrained_model_name_or_path, weight_dtype, "cpu", args.disable_mmap_load_safetensors
     )
     
-    ema = EMA(flux, beta = args.ema_beta, update_after_step=args.ema_update_after_step, update_every=args.ema_update_every, update_model_with_ema_every=args.ema_switch_every, allow_different_devices=True) if args.ema else None
+    if args.ema:
+        ema = EMA(flux, beta = args.ema_beta, update_after_step=args.ema_update_after_step, update_every=args.ema_update_every, update_model_with_ema_every=args.ema_switch_every, allow_different_devices=True) if args.ema else None
 
     if args.gradient_checkpointing:
         flux.enable_gradient_checkpointing(cpu_offload=args.cpu_offload_checkpointing)
@@ -771,7 +772,7 @@ def train(args):
                             num_train_epochs,
                             global_step,
                             accelerator.unwrap_model(flux),
-                            ema
+                            ema if not args.no_ema_sampling else None
                         )
                 optimizer_train_fn()
 
@@ -815,7 +816,7 @@ def train(args):
                     num_train_epochs,
                     global_step,
                     accelerator.unwrap_model(flux),
-                    ema
+                    ema if not args.no_ema_sampling else None
                 )
 
         flux_train_utils.sample_images(
@@ -928,6 +929,10 @@ def setup_parser() -> argparse.ArgumentParser:
         "--ema_switch_every",
         type=int,
         default=None
+    )
+    parser.add_argument(
+        "--no_ema_sampling",
+        action="store_true"
     )
     parser.add_argument(
         "--no_shuffle",
