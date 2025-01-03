@@ -184,16 +184,17 @@ def sample_images(
     accelerator.wait_for_everyone()
     sample_results = gather_object(sample_results)
 
-    for label, prompt, image in sample_results:
-        if "wandb" in [tracker.name for tracker in accelerator.trackers]:
-            wandb_tracker = accelerator.get_tracker("wandb")
+    if accelerator.is_local_main_process:
+        for label, prompt, image in sample_results:
+            if "wandb" in [tracker.name for tracker in accelerator.trackers]:
+                wandb_tracker = accelerator.get_tracker("wandb")
 
-            import wandb
+                import wandb
 
-        # not to commit images to avoid inconsistency between training and logging steps
-        wandb_tracker.log({label: wandb.Image(image, caption=prompt)}, commit=False)  # positive prompt as a caption
+            # not to commit images to avoid inconsistency between training and logging steps
+            wandb_tracker.log({label: wandb.Image(image, caption=prompt)}, commit=False)  # positive prompt as a caption
 
-
+    accelerator.wait_for_everyone()
 
     torch.set_rng_state(rng_state)
     if cuda_rng_state is not None:

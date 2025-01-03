@@ -216,7 +216,14 @@ def train(args):
     else:
         t5xxl_max_token_length = args.t5xxl_max_token_length
 
-    flux_tokenize_strategy = strategy_flux.FluxTokenizeStrategy(t5xxl_max_token_length)
+    #Multiple writers makes things weird
+    if accelerator.is_local_main_process:
+        flux_tokenize_strategy = strategy_flux.FluxTokenizeStrategy(t5xxl_max_token_length)
+    accelerator.wait_for_everyone()
+    if not accelerator.is_local_main_process:
+        flux_tokenize_strategy = strategy_flux.FluxTokenizeStrategy(t5xxl_max_token_length)
+    accelerator.wait_for_everyone()
+    
     strategy_base.TokenizeStrategy.set_strategy(flux_tokenize_strategy)
 
     # load clip_l, t5xxl for caching text encoder outputs
