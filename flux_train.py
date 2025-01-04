@@ -292,7 +292,7 @@ def train(args):
     )
     
     if args.ema:
-        ema = EMA(flux, beta = args.ema_beta, update_after_step=args.ema_update_after_step, update_every=args.ema_update_every, update_model_with_ema_every=args.ema_switch_every, allow_different_devices=True) if args.ema else None
+        ema = EMA(flux, beta = args.ema_beta, update_after_step=args.ema_update_after_step, update_every=args.ema_update_every, update_model_with_ema_every=args.ema_switch_every, allow_different_devices=True, inv_gamma=args.ema_gamma, power=args.ema_power) if args.ema else None
 
     if args.gradient_checkpointing:
         flux.enable_gradient_checkpointing(cpu_offload=args.cpu_offload_checkpointing)
@@ -940,6 +940,16 @@ def setup_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no_ema_sampling",
         action="store_true"
+    )
+    parser.add_argument(
+        "--ema_gamma",
+        type=float,
+        default=1.0
+    )
+    parser.add_argument(
+        "--ema_power",
+        type=float,
+        default=2/3
     )
     parser.add_argument(
         "--no_shuffle",
